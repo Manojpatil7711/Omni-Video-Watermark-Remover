@@ -9,11 +9,13 @@ from pathlib import Path
 
 import cv2
 import ffmpeg
+import numpy as np
 from tqdm import tqdm
 
 from .detector import StaticDetector, StaticDetectorConfig
 from .dynamic import IoUTracker, OpenCVMotionBackend, merge_track_masks
 from .inpainter import InpaintConfig, Inpainter
+from .sam2_backend import SAM2Config, SAM2VideoBackend
 
 
 @dataclass
@@ -31,6 +33,7 @@ class PipelineConfig:
     keep_temp: bool = False
     work_dir: str | None = None
     dynamic_backend: str = "opencv"
+    sam2_model_id: str = "facebook/sam2.1-hiera-small"
 
 
 class VideoPipeline:
@@ -90,29 +93,83 @@ class VideoPipeline:
         frames = [frame for frame in frames if frame is not None]
         return StaticDetector(StaticDetectorConfig(dilate_px=self.cfg.mask_dilate)).detect(frames).mask
 
-    def _dynamic_masks(self, d):
-        if self.cfg.dynamic_backend != "opencv":
-            raise RuntimeError(
-                f"{self.cfg.dynamic_backend} backend is not installed/configured yet; "
-                "use --dynamic-backend opencv or attach the corresponding model adapter"
-            )
+    def _dynamic_seed(self, d):
+        files = sorted(d.glob("*.png"))
+        frames = [cv2.imread(str(p)) for p in files[: min(12, len(files))]]
+        frames = [frame for frame in frames if frame is not None]
+        if not frames:
+            raise RuntimeError("No frames available for dynamic detection")
         backend = OpenCVMotionBackend()
         tracker = IoUTracker()
+        masks = []
+        for frame in frames:
+            tracks = tracker.update(backend.detect(frame))
+            masks.append(merge_track_masks(tracks, frame.shape[:2]))
+        seed = np.zeros_like(masks[0])
+        for mask in masks:
+            seed = cv2.bitwise_or(seed, mask)
+        if self.cfg.mask_dilate > 0:
+            k = 2 * self.cfg.mask_dilate + 1
+            seed = cv2.dilate(seed, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        if not np.any(seed):
+            raise RuntimeError("Dynamic detector produced an empty seed mask")
+        return seed
+
+    def _dynamic_masks(self, d):
+        if self.cfg.dynamic_backend == "opencv":
+            backend = OpenCVMotionBackend()
+            tracker = IoUTracker()
+            md = self.work / "masks"
+            md.mkdir(exist_ok=True)
+            for path in tqdm(sorted(d.glob("*.png")), desc="Dynamic masks"):
+                frame = cv2.imread(str(path))
+                if frame is None:
+                    raise RuntimeError(f"Frame read failure: {path}")
+                tracks = tracker.update(backend.detect(frame))
+                mask = merge_track_masks(tracks, frame.shape[:2])
+                if self.cfg.mask_dilate > 0:
+                    k = 2 * self.cfg.mask_dilate + 1
+                    mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+                if not cv2.imwrite(str(md / path.name), mask):
+                    raise OSError(f"Mask write failed: {path}")
+            return md
+
+        if self.cfg.dynamic_backend != "sam2":
+            raise RuntimeError(
+                f"{self.cfg.dynamic_backend} backend is not installed/configured yet"
+            )
+        device = self.cfg.device
+        if device == "auto":
+            device = "cuda" if self._cuda_available() else "cpu"
+        backend = SAM2VideoBackend(
+            SAM2Config(model_id=self.cfg.sam2_model_id, device=device)
+        )
+        try:
+            propagated = backend.segment_video(self.cfg.input, self._dynamic_seed(d))
+        finally:
+            backend.close()
         md = self.work / "masks"
         md.mkdir(exist_ok=True)
-        for path in tqdm(sorted(d.glob("*.png")), desc="Dynamic masks"):
-            frame = cv2.imread(str(path))
-            if frame is None:
-                raise RuntimeError(f"Frame read failure: {path}")
-            detections = backend.detect(frame)
-            tracks = tracker.update(detections)
-            mask = merge_track_masks(tracks, frame.shape[:2])
-            if self.cfg.mask_dilate > 0:
-                k = 2 * self.cfg.mask_dilate + 1
-                mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        files = sorted(d.glob("*.png"))
+        for idx, path in enumerate(tqdm(files, desc="SAM-2 masks")):
+            mask = propagated.get(idx)
+            if mask is None:
+                frame = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+                if frame is None:
+                    raise RuntimeError(f"Frame read failure: {path}")
+                mask = np.zeros_like(frame)
             if not cv2.imwrite(str(md / path.name), mask):
                 raise OSError(f"Mask write failed: {path}")
         return md
+
+    @staticmethod
+    def _cuda_available():
+        try:
+            import torch
+
+            return torch.cuda.is_available()
+        except ImportError:
+            return False
 
     def _write_masks(self, d, mask):
         md = self.work / "masks"
@@ -173,6 +230,10 @@ class VideoPipeline:
     def run(self):
         d, fps = self._extract()
         if self.cfg.mode == "dynamic":
+            if self.cfg.engine == "ai":
+                raise NotImplementedError(
+                    "AI temporal inpainting requires a configured ProPainter/LaMa backend"
+                )
             masks = self._dynamic_masks(d)
         else:
             masks = self._write_masks(d, self._static_mask(d))
