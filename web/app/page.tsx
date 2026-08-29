@@ -1,53 +1,62 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+);
 
 export default function Home() {
-  const [inputUrl, setInputUrl] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState("");
   const [status, setStatus] = useState("");
+  const [progress, setProgress] = useState(0);
+  const [outputUrl, setOutputUrl] = useState("");
   const [error, setError] = useState("");
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function createJob(event: FormEvent) {
     event.preventDefault();
-    setError("");
-    setStatus("Submitting…");
-    const response = await fetch("/api/jobs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input_url: inputUrl }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      setError(data.error ?? "Unable to create job");
-      setStatus("");
-      return;
-    }
-    setJobId(data.job_id);
-    setStatus(data.status ?? "queued");
+    if (!file) return;
+    setError(""); setOutputUrl(""); setProgress(0); setStatus("Preparing upload…");
+    try {
+      const sign = await fetch("/api/upload", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: file.name, contentType: file.type || "video/mp4" }) });
+      const signed = await sign.json();
+      if (!sign.ok) throw new Error(signed.error ?? "Unable to prepare upload");
+      const uploaded = await supabase.storage.from(signed.bucket).uploadToSignedUrl(signed.path, signed.token, file);
+      if (uploaded.error) throw uploaded.error;
+      const publicUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${encodeURIComponent(signed.bucket)}/${signed.path.split("/").map(encodeURIComponent).join("/")}`;
+      const job = await fetch("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input_url: publicUrl }) });
+      const data = await job.json();
+      if (!job.ok) throw new Error(data.error ?? "Unable to create processing job");
+      setJobId(data.id); setStatus(data.status ?? "queued");
+      if (timer.current) clearInterval(timer.current);
+      timer.current = setInterval(() => void refresh(data.id), 2000);
+    } catch (e) { setError(e instanceof Error ? e.message : "Upload failed"); setStatus(""); }
   }
 
-  async function refresh() {
-    if (!jobId) return;
-    const response = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
+  async function refresh(id = jobId) {
+    if (!id) return;
+    const response = await fetch(`/api/jobs/${encodeURIComponent(id)}`, { cache: "no-store" });
     const data = await response.json();
-    if (!response.ok) {
-      setError(data.error ?? "Unable to read job");
-      return;
-    }
-    setStatus(data.status ?? "unknown");
+    if (!response.ok) { setError(data.error ?? "Unable to read job"); return; }
+    setStatus(data.status ?? "unknown"); setProgress(Number(data.progress ?? 0));
+    if (data.output_url) setOutputUrl(data.output_url);
+    if (["completed", "failed"].includes(data.status) && timer.current) { clearInterval(timer.current); timer.current = null; }
   }
 
   return (
     <main style={{ maxWidth: 720, margin: "80px auto", padding: 24, fontFamily: "system-ui" }}>
       <h1>Omni Watermark Remover</h1>
-      <p>Remove authorized video overlays with the configured processing worker.</p>
+      <p>Upload a video and remove authorized overlays with the configured processing worker.</p>
       <form onSubmit={createJob} style={{ display: "grid", gap: 12 }}>
-        <label htmlFor="input-url">Input video URL</label>
-        <input id="input-url" value={inputUrl} onChange={(e) => setInputUrl(e.target.value)} required type="url" placeholder="https://…/video.mp4" style={{ padding: 12 }} />
-        <button type="submit" style={{ padding: 12 }}>Start processing</button>
+        <label htmlFor="video">Video file</label>
+        <input id="video" type="file" accept="video/*" required onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        <button type="submit" disabled={!file} style={{ padding: 12 }}>Upload &amp; process</button>
       </form>
-      {jobId && <section style={{ marginTop: 24 }}><strong>Job:</strong> {jobId}<br /><strong>Status:</strong> {status}<br /><button onClick={refresh} style={{ marginTop: 12, padding: 10 }}>Refresh status</button></section>}
+      {jobId && <section style={{ marginTop: 24 }}><strong>Job:</strong> {jobId}<br /><strong>Status:</strong> {status}<br /><strong>Progress:</strong> {progress}% {outputUrl && <><br /><a href={outputUrl} target="_blank" rel="noreferrer">Open processed video</a></>}<br /><button type="button" onClick={() => refresh()} style={{ marginTop: 12, padding: 10 }}>Refresh</button></section>}
       {error && <p role="alert">{error}</p>}
     </main>
   );
