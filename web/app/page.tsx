@@ -3,11 +3,6 @@
 import { FormEvent, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
-);
-
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState("");
@@ -22,12 +17,18 @@ export default function Home() {
     if (!file) return;
     setError(""); setOutputUrl(""); setProgress(0); setStatus("Preparing upload…");
     try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error("Supabase environment variables are not configured.");
+      }
+      const supabase = createClient(supabaseUrl, supabaseAnonKey);
       const sign = await fetch("/api/upload", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: file.name, contentType: file.type || "video/mp4" }) });
       const signed = await sign.json();
       if (!sign.ok) throw new Error(signed.error ?? "Unable to prepare upload");
       const uploaded = await supabase.storage.from(signed.bucket).uploadToSignedUrl(signed.path, signed.token, file);
       if (uploaded.error) throw uploaded.error;
-      const publicUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${encodeURIComponent(signed.bucket)}/${signed.path.split("/").map(encodeURIComponent).join("/")}`;
+      const publicUrl = `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(signed.bucket)}/${signed.path.split("/").map(encodeURIComponent).join("/")}`;
       const job = await fetch("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input_url: publicUrl }) });
       const data = await job.json();
       if (!job.ok) throw new Error(data.error ?? "Unable to create processing job");
