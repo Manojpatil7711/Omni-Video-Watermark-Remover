@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+
 from omni_watermark.detector import StaticDetector, StaticDetectorConfig
 
 
