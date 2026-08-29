@@ -1,0 +1,20 @@
+services:
+  watermark-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    gpus: all
+    volumes:
+      - ./data:/data
+    working_dir: /app
+    command:
+      - --input
+      - /data/input.mp4
+      - --output
+      - /data/output.mp4
+      - --mode
+      - static
+      - --engine
+      - fast
+      - --device
+      - cuda
