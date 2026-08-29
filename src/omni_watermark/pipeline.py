@@ -15,6 +15,7 @@ from tqdm import tqdm
 from .detector import StaticDetector, StaticDetectorConfig
 from .dynamic import IoUTracker, OpenCVMotionBackend, merge_track_masks
 from .inpainter import InpaintConfig, Inpainter
+from .propainter_backend import ProPainterBackend
 from .sam2_backend import SAM2Config, SAM2VideoBackend
 
 
@@ -34,6 +35,13 @@ class PipelineConfig:
     work_dir: str | None = None
     dynamic_backend: str = "opencv"
     sam2_model_id: str = "facebook/sam2.1-hiera-small"
+    propainter_command: tuple[str, ...] | None = None
+    propainter_fp16: bool = True
+    propainter_width: int | None = None
+    propainter_height: int | None = None
+    propainter_subvideo_length: int = 80
+    propainter_neighbor_length: int = 10
+    propainter_ref_stride: int = 10
 
 
 class VideoPipeline:
@@ -52,6 +60,8 @@ class VideoPipeline:
             raise ValueError("engine must be fast/ai")
         if self.cfg.dynamic_backend not in {"opencv", "sam2", "yolo-world", "florence2"}:
             raise ValueError("unsupported dynamic backend")
+        if self.cfg.engine == "ai" and not self.cfg.propainter_command:
+            raise ValueError("--propainter-command is required when --engine ai")
         if self.cfg.batch_size < 1:
             raise ValueError("batch-size must be >= 1")
         for exe in ("ffmpeg", "ffprobe"):
@@ -158,6 +168,9 @@ class VideoPipeline:
                 if frame is None:
                     raise RuntimeError(f"Frame read failure: {path}")
                 mask = np.zeros_like(frame)
+            if self.cfg.mask_dilate > 0:
+                k = 2 * self.cfg.mask_dilate + 1
+                mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
             if not cv2.imwrite(str(md / path.name), mask):
                 raise OSError(f"Mask write failed: {path}")
         return md
@@ -179,12 +192,12 @@ class VideoPipeline:
                 raise OSError(f"Mask write failed: {path}")
         return md
 
-    def _process(self, d, md):
+    def _process_fast(self, d, md):
         out = self.work / "processed"
         out.mkdir(exist_ok=True)
         files = sorted(d.glob("*.png"))
         inpainter = Inpainter(
-            self.cfg.engine,
+            "fast",
             InpaintConfig(self.cfg.telea_radius, self.cfg.batch_size, self.cfg.device),
         )
         for start in tqdm(range(0, len(files), self.cfg.batch_size), desc="Inpainting"):
@@ -198,6 +211,30 @@ class VideoPipeline:
                 if not cv2.imwrite(str(out / path.name), image):
                     raise OSError(f"Output frame write failed: {path}")
             inpainter.release_memory()
+        return out
+
+    def _process_ai(self, d, md, fps):
+        files = sorted(d.glob("*.png"))
+        frames = [cv2.imread(str(path), cv2.IMREAD_COLOR) for path in files]
+        masks = [cv2.imread(str(md / path.name), cv2.IMREAD_GRAYSCALE) for path in files]
+        if any(item is None for item in frames + masks):
+            raise RuntimeError("Frame/mask read failure")
+        backend = ProPainterBackend(
+            self.cfg.propainter_command or (),
+            work_dir=str(self.work),
+            fp16=self.cfg.propainter_fp16,
+            width=self.cfg.propainter_width,
+            height=self.cfg.propainter_height,
+            subvideo_length=self.cfg.propainter_subvideo_length,
+            neighbor_length=self.cfg.propainter_neighbor_length,
+            ref_stride=self.cfg.propainter_ref_stride,
+        )
+        results = backend.process(frames, masks, fps)
+        out = self.work / "processed"
+        out.mkdir(exist_ok=True)
+        for path, image in zip(files, results):
+            if not cv2.imwrite(str(out / path.name), image):
+                raise OSError(f"Output frame write failed: {path}")
         return out
 
     def _assemble(self, out, fps):
@@ -230,14 +267,10 @@ class VideoPipeline:
     def run(self):
         d, fps = self._extract()
         if self.cfg.mode == "dynamic":
-            if self.cfg.engine == "ai":
-                raise NotImplementedError(
-                    "AI temporal inpainting requires a configured ProPainter/LaMa backend"
-                )
             masks = self._dynamic_masks(d)
         else:
             masks = self._write_masks(d, self._static_mask(d))
-        out = self._process(d, masks)
+        out = self._process_ai(d, masks, fps) if self.cfg.engine == "ai" else self._process_fast(d, masks)
         self._assemble(out, fps)
         if not self.cfg.keep_temp and self.cfg.work_dir is None:
             shutil.rmtree(self.work, ignore_errors=True)
