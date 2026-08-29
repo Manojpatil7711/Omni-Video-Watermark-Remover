@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import cv2
 import numpy as np
@@ -116,9 +116,7 @@ class DynamicDetector:
         self, backend=None, label_allowlist: Iterable[str] | None = None
     ):
         self.backend = backend
-        self.label_allowlist = {
-            x.lower() for x in (label_allowlist or [])
-        }
+        self.label_allowlist = {x.lower() for x in (label_allowlist or [])}
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         if self.backend is None:
