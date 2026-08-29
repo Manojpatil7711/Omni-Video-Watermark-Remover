@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import gc
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import cv2
 import numpy as np
 
 
@@ -18,13 +18,7 @@ class SAM2Config:
 
 
 class SAM2VideoBackend:
-    """Real SAM 2 video-segmentation adapter with lazy model loading.
-
-    A seed mask is supplied by the lightweight motion detector. SAM 2 then
-    propagates that object mask through the complete source video using its
-    native video-memory tracker. SAM 2 is optional so CPU-only CI remains
-    dependency-free.
-    """
+    """Real SAM 2 video-segmentation adapter with lazy model loading."""
 
     def __init__(self, config: SAM2Config | None = None):
         self.cfg = config or SAM2Config()
@@ -56,7 +50,6 @@ class SAM2VideoBackend:
                 fill_hole_area=self.cfg.fill_hole_area,
             )
         except TypeError:
-            # Older SAM 2 releases may not expose every constructor kwarg.
             self._predictor = SAM2VideoPredictor.from_pretrained(
                 self.cfg.model_id,
                 device=device,
@@ -111,13 +104,11 @@ class SAM2VideoBackend:
     def close(self) -> None:
         self._state = None
         self._predictor = None
+        gc.collect()
         try:
-            import gc
             import torch
-
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
         except ImportError:
-            pass
+            return
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
