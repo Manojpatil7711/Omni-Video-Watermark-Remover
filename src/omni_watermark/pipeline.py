@@ -12,6 +12,7 @@ import ffmpeg
 from tqdm import tqdm
 
 from .detector import StaticDetector, StaticDetectorConfig
+from .dynamic import IoUTracker, OpenCVMotionBackend, merge_track_masks
 from .inpainter import InpaintConfig, Inpainter
 
 
@@ -29,15 +30,14 @@ class PipelineConfig:
     device: str = "auto"
     keep_temp: bool = False
     work_dir: str | None = None
+    dynamic_backend: str = "opencv"
 
 
 class VideoPipeline:
     def __init__(self, cfg: PipelineConfig):
         self.cfg = cfg
         self._validate()
-        self.work = Path(
-            cfg.work_dir or tempfile.mkdtemp(prefix="omni-watermark-")
-        )
+        self.work = Path(cfg.work_dir or tempfile.mkdtemp(prefix="omni-watermark-"))
         self.work.mkdir(parents=True, exist_ok=True)
 
     def _validate(self):
@@ -47,6 +47,8 @@ class VideoPipeline:
             raise ValueError("mode must be static/dynamic")
         if self.cfg.engine not in {"fast", "ai"}:
             raise ValueError("engine must be fast/ai")
+        if self.cfg.dynamic_backend not in {"opencv", "sam2", "yolo-world", "florence2"}:
+            raise ValueError("unsupported dynamic backend")
         if self.cfg.batch_size < 1:
             raise ValueError("batch-size must be >= 1")
         for exe in ("ffmpeg", "ffprobe"):
@@ -86,9 +88,31 @@ class VideoPipeline:
         stride = max(1, len(files) // 48)
         frames = [cv2.imread(str(p)) for p in files[::stride][:48]]
         frames = [frame for frame in frames if frame is not None]
-        return StaticDetector(
-            StaticDetectorConfig(dilate_px=self.cfg.mask_dilate)
-        ).detect(frames).mask
+        return StaticDetector(StaticDetectorConfig(dilate_px=self.cfg.mask_dilate)).detect(frames).mask
+
+    def _dynamic_masks(self, d):
+        if self.cfg.dynamic_backend != "opencv":
+            raise RuntimeError(
+                f"{self.cfg.dynamic_backend} backend is not installed/configured yet; "
+                "use --dynamic-backend opencv or attach the corresponding model adapter"
+            )
+        backend = OpenCVMotionBackend()
+        tracker = IoUTracker()
+        md = self.work / "masks"
+        md.mkdir(exist_ok=True)
+        for path in tqdm(sorted(d.glob("*.png")), desc="Dynamic masks"):
+            frame = cv2.imread(str(path))
+            if frame is None:
+                raise RuntimeError(f"Frame read failure: {path}")
+            detections = backend.detect(frame)
+            tracks = tracker.update(detections)
+            mask = merge_track_masks(tracks, frame.shape[:2])
+            if self.cfg.mask_dilate > 0:
+                k = 2 * self.cfg.mask_dilate + 1
+                mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+            if not cv2.imwrite(str(md / path.name), mask):
+                raise OSError(f"Mask write failed: {path}")
+        return md
 
     def _write_masks(self, d, mask):
         md = self.work / "masks"
@@ -104,21 +128,12 @@ class VideoPipeline:
         files = sorted(d.glob("*.png"))
         inpainter = Inpainter(
             self.cfg.engine,
-            InpaintConfig(
-                self.cfg.telea_radius,
-                self.cfg.batch_size,
-                self.cfg.device,
-            ),
+            InpaintConfig(self.cfg.telea_radius, self.cfg.batch_size, self.cfg.device),
         )
-        for start in tqdm(
-            range(0, len(files), self.cfg.batch_size), desc="Inpainting"
-        ):
+        for start in tqdm(range(0, len(files), self.cfg.batch_size), desc="Inpainting"):
             batch = files[start : start + self.cfg.batch_size]
             frames = [cv2.imread(str(path)) for path in batch]
-            masks = [
-                cv2.imread(str(md / path.name), cv2.IMREAD_GRAYSCALE)
-                for path in batch
-            ]
+            masks = [cv2.imread(str(md / path.name), cv2.IMREAD_GRAYSCALE) for path in batch]
             if any(item is None for item in frames + masks):
                 raise RuntimeError("Frame/mask read failure")
             results = inpainter.process_batch(frames, masks)
@@ -132,12 +147,7 @@ class VideoPipeline:
         video_tmp = self.work / "video.mp4"
         (
             ffmpeg.input(str(out / "%08d.png"), framerate=fps, start_number=0)
-            .output(
-                str(video_tmp),
-                vcodec="libx264",
-                pix_fmt="yuv420p",
-                movflags="+faststart",
-            )
+            .output(str(video_tmp), vcodec="libx264", pix_fmt="yuv420p", movflags="+faststart")
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)
         )
@@ -163,11 +173,9 @@ class VideoPipeline:
     def run(self):
         d, fps = self._extract()
         if self.cfg.mode == "dynamic":
-            raise NotImplementedError(
-                "Dynamic mode requires configured detector/tracker + "
-                "ProPainter/LaMa adapter"
-            )
-        masks = self._write_masks(d, self._static_mask(d))
+            masks = self._dynamic_masks(d)
+        else:
+            masks = self._write_masks(d, self._static_mask(d))
         out = self._process(d, masks)
         self._assemble(out, fps)
         if not self.cfg.keep_temp and self.cfg.work_dir is None:
