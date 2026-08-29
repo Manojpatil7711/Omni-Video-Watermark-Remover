@@ -1,8 +1,7 @@
-"""Minimal authenticated GPU-worker HTTP contract.
+"""Authenticated GPU-worker HTTP contract.
 
-This service intentionally does not accept large video binaries in requests.
-Jobs reference object-storage URLs and are processed by the existing pipeline
-adapter in the worker image.
+Large video binaries stay in object storage. Jobs reference URLs and are
+processed by the worker pipeline.
 """
 from __future__ import annotations
 
@@ -15,7 +14,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, HttpUrl
 
-app = FastAPI(title="Omni Watermark GPU Worker", version="0.1.0")
+app = FastAPI(title="Omni Watermark GPU Worker", version="0.1.1")
 _jobs: dict[str, dict[str, Any]] = {}
 _lock = Lock()
 
