@@ -22,7 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--dynamic-backend",
         choices=("opencv", "sam2", "yolo-world", "florence2"),
         default="opencv",
-        help="Dynamic mask backend; heavyweight AI backends require adapters/models.",
+        help="Dynamic mask backend.",
+    )
+    parser.add_argument(
+        "--sam2-model-id",
+        default="facebook/sam2.1-hiera-small",
+        help="Hugging Face SAM 2 model ID.",
     )
     parser.add_argument("--work-dir")
     parser.add_argument("--keep-temp", action="store_true")
@@ -47,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
                 work_dir=args.work_dir,
                 keep_temp=args.keep_temp,
                 dynamic_backend=args.dynamic_backend,
+                sam2_model_id=args.sam2_model_id,
             )
         ).run()
         print(f"Done: {output}")
