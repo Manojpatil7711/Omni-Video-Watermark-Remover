@@ -6,43 +6,50 @@ import sys
 from .pipeline import PipelineConfig, VideoPipeline
 
 
-def build_parser():
-    p = argparse.ArgumentParser(prog="omni-watermark")
-    p.add_argument("--input", required=True)
-    p.add_argument("--output", required=True)
-    p.add_argument("--mode", choices=("static", "dynamic"), default="static")
-    p.add_argument("--engine", choices=("fast", "ai"), default="fast")
-    p.add_argument("--gpu-id", type=int, default=0)
-    p.add_argument("--batch-size", type=int, default=4)
-    p.add_argument("--sample-rate", type=int, default=12)
-    p.add_argument("--mask-dilate", type=int, default=3)
-    p.add_argument("--telea-radius", type=int, default=3)
-    p.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
-    p.add_argument("--work-dir")
-    p.add_argument("--keep-temp", action="store_true")
-    return p
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="omni-watermark")
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--mode", choices=("static", "dynamic"), default="static")
+    parser.add_argument("--engine", choices=("fast", "ai"), default="fast")
+    parser.add_argument("--gpu-id", type=int, default=0)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--sample-rate", type=int, default=12)
+    parser.add_argument("--mask-dilate", type=int, default=3)
+    parser.add_argument("--telea-radius", type=int, default=3)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument(
+        "--dynamic-backend",
+        choices=("opencv", "sam2", "yolo-world", "florence2"),
+        default="opencv",
+        help="Dynamic mask backend; heavyweight AI backends require adapters/models.",
+    )
+    parser.add_argument("--work-dir")
+    parser.add_argument("--keep-temp", action="store_true")
+    return parser
 
 
-def main(argv=None):
-    a = build_parser().parse_args(argv)
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     try:
-        out = VideoPipeline(
+        output = VideoPipeline(
             PipelineConfig(
-                input=a.input,
-                output=a.output,
-                mode=a.mode,
-                engine=a.engine,
-                gpu_id=a.gpu_id,
-                batch_size=a.batch_size,
-                sample_rate=a.sample_rate,
-                mask_dilate=a.mask_dilate,
-                telea_radius=a.telea_radius,
-                device=a.device,
-                work_dir=a.work_dir,
-                keep_temp=a.keep_temp,
+                input=args.input,
+                output=args.output,
+                mode=args.mode,
+                engine=args.engine,
+                gpu_id=args.gpu_id,
+                batch_size=args.batch_size,
+                sample_rate=args.sample_rate,
+                mask_dilate=args.mask_dilate,
+                telea_radius=args.telea_radius,
+                device=args.device,
+                work_dir=args.work_dir,
+                keep_temp=args.keep_temp,
+                dynamic_backend=args.dynamic_backend,
             )
         ).run()
-        print(f"Done: {out}")
+        print(f"Done: {output}")
         return 0
     except KeyboardInterrupt:
         return 130
