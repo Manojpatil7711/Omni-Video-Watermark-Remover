@@ -1,0 +1,11 @@
+numpy>=1.26
+opencv-python-headless>=4.9
+ffmpeg-python>=0.2.0
+PyYAML>=6.0
+tqdm>=4.66
+psutil>=5.9
+# Optional GPU stack:
+# torch>=2.2
+# torchvision>=0.17
+# transformers>=4.45
+# pillow>=10.0
