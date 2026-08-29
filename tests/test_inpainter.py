@@ -1,4 +1,5 @@
 import numpy as np
+
 from omni_watermark.inpainter import FastInpainter
 
 
