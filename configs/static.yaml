@@ -1,0 +1,10 @@
+mode: static
+engine: fast
+sample_frames: 48
+temporal_stability: 0.82
+edge_percentile: 85
+min_area_ratio: 0.0002
+max_area_ratio: 0.12
+mask_dilate: 3
+telea_radius: 3
+batch_size: 4
