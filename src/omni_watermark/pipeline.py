@@ -51,7 +51,7 @@ class VideoPipeline:
             raise ValueError("batch-size must be >= 1")
         for exe in ("ffmpeg", "ffprobe"):
             if shutil.which(exe) is None:
-                raise EnvironmentError(f"{exe} is not on PATH")
+                raise OSError(f"{exe} is not on PATH")
 
     def probe(self):
         return ffmpeg.probe(self.cfg.input)
@@ -73,7 +73,7 @@ class VideoPipeline:
                 if not ok:
                     break
                 if not cv2.imwrite(str(d / f"{i:08d}.png"), frame):
-                    raise IOError("Frame write failed")
+                    raise OSError("Frame write failed")
                 i += 1
         finally:
             cap.release()
@@ -95,7 +95,7 @@ class VideoPipeline:
         md.mkdir(exist_ok=True)
         for path in tqdm(sorted(d.glob("*.png")), desc="Masks"):
             if not cv2.imwrite(str(md / path.name), mask):
-                raise IOError(f"Mask write failed: {path}")
+                raise OSError(f"Mask write failed: {path}")
         return md
 
     def _process(self, d, md):
@@ -124,7 +124,7 @@ class VideoPipeline:
             results = inpainter.process_batch(frames, masks)
             for path, image in zip(batch, results):
                 if not cv2.imwrite(str(out / path.name), image):
-                    raise IOError(f"Output frame write failed: {path}")
+                    raise OSError(f"Output frame write failed: {path}")
             inpainter.release_memory()
         return out
 
