@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omni-video-watermark-remover"
+version = "0.1.0"
+description = "Static and dynamic video watermark processing pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = ["numpy>=1.26", "opencv-python-headless>=4.9", "ffmpeg-python>=0.2.0", "PyYAML>=6.0", "tqdm>=4.66"]
+
+[project.optional-dependencies]
+ai = ["torch>=2.2", "torchvision>=0.17", "transformers>=4.45", "pillow>=10.0"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[project.scripts]
+omni-watermark = "omni_watermark.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
