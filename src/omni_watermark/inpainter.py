@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import gc
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import cv2
 import numpy as np
@@ -28,7 +28,9 @@ class FastInpainter:
         return (
             frame.copy()
             if not np.any(m)
-            else cv2.inpaint(frame, m, max(1, self.cfg.telea_radius), cv2.INPAINT_TELEA)
+            else cv2.inpaint(
+                frame, m, max(1, self.cfg.telea_radius), cv2.INPAINT_TELEA
+            )
         )
 
     def inpaint_batch(
