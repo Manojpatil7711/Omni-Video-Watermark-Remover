@@ -6,7 +6,6 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import ffmpeg
@@ -29,7 +28,7 @@ class PipelineConfig:
     telea_radius: int = 3
     device: str = "auto"
     keep_temp: bool = False
-    work_dir: Optional[str] = None
+    work_dir: str | None = None
 
 
 class VideoPipeline:
@@ -85,9 +84,7 @@ class VideoPipeline:
     def _static_mask(self, d):
         files = sorted(d.glob("*.png"))
         stride = max(1, len(files) // 48)
-        frames = [
-            cv2.imread(str(p)) for p in files[::stride][:48]
-        ]
+        frames = [cv2.imread(str(p)) for p in files[::stride][:48]]
         frames = [frame for frame in frames if frame is not None]
         return StaticDetector(
             StaticDetectorConfig(dilate_px=self.cfg.mask_dilate)
