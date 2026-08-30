@@ -24,11 +24,13 @@ export default function Home() {
       const signed = await sign.json();
       if (!sign.ok) throw new Error(signed.error ?? "Unable to prepare upload");
 
-      // Upload directly to Supabase using the server-created signed URL.
-      // This avoids requiring NEXT_PUBLIC_SUPABASE_* variables in the browser bundle.
+      // Supabase signed-upload targets are consumed by the upload-to-signed-url
+      // operation. Use POST with the signed token rather than treating the
+      // endpoint as a normal authenticated object PUT; this avoids falling back
+      // to an anonymous storage.objects INSERT/RLS check.
       const uploaded = await fetch(signed.signedUrl, {
-        method: "PUT",
-        headers: { "content-type": file.type || "video/mp4", "x-upsert": "false" },
+        method: "POST",
+        headers: { "content-type": file.type || "video/mp4" },
         body: file,
       });
       if (!uploaded.ok) {
