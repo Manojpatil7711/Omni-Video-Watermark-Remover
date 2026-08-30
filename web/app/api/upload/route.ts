@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 export async function POST(request: Request) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_INPUT_BUCKET ?? "videos";
+  // Support the environment-variable name already used by the Vercel project,
+  // while keeping the older INPUT_BUCKET name backward-compatible.
+  const bucket = process.env.SUPABASE_INPUT_BUCKET ?? process.env.SUPABASE_STORAGE_BUCKET ?? "videos";
   if (!supabaseUrl || !serviceKey) {
     return NextResponse.json({ error: "Storage is not configured" }, { status: 503 });
   }
