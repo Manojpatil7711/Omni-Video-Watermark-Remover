@@ -18,11 +18,11 @@ export default function Home() {
     setError(""); setOutputUrl(""); setProgress(0); setStatus("Preparing upload…");
     try {
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-      if (!supabaseUrl || !supabaseAnonKey) {
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+      if (!supabaseUrl || !supabaseKey) {
         throw new Error("Supabase environment variables are not configured.");
       }
-      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+      const supabase = createClient(supabaseUrl, supabaseKey);
       const sign = await fetch("/api/upload", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: file.name, contentType: file.type || "video/mp4" }) });
       const signed = await sign.json();
       if (!sign.ok) throw new Error(signed.error ?? "Unable to prepare upload");
