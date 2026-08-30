@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useRef, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -17,19 +16,31 @@ export default function Home() {
     if (!file) return;
     setError(""); setOutputUrl(""); setProgress(0); setStatus("Preparing upload…");
     try {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-      if (!supabaseUrl || !supabaseKey) {
-        throw new Error("Supabase environment variables are not configured.");
-      }
-      const supabase = createClient(supabaseUrl, supabaseKey);
-      const sign = await fetch("/api/upload", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: file.name, contentType: file.type || "video/mp4" }) });
+      const sign = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: file.name, contentType: file.type || "video/mp4" }),
+      });
       const signed = await sign.json();
       if (!sign.ok) throw new Error(signed.error ?? "Unable to prepare upload");
-      const uploaded = await supabase.storage.from(signed.bucket).uploadToSignedUrl(signed.path, signed.token, file);
-      if (uploaded.error) throw uploaded.error;
-      const publicUrl = `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(signed.bucket)}/${signed.path.split("/").map(encodeURIComponent).join("/")}`;
-      const job = await fetch("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ input_url: publicUrl }) });
+
+      // Upload directly to Supabase using the server-created signed URL.
+      // This avoids requiring NEXT_PUBLIC_SUPABASE_* variables in the browser bundle.
+      const uploaded = await fetch(signed.signedUrl, {
+        method: "PUT",
+        headers: { "content-type": file.type || "video/mp4", "x-upsert": "false" },
+        body: file,
+      });
+      if (!uploaded.ok) {
+        const detail = await uploaded.text().catch(() => "");
+        throw new Error(detail || "Video upload failed");
+      }
+
+      const job = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input_url: signed.publicUrl }),
+      });
       const data = await job.json();
       if (!job.ok) throw new Error(data.error ?? "Unable to create processing job");
       setJobId(data.id); setStatus(data.status ?? "queued");
